@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Python in Browser with Pyodide</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+    <h1>This is a Pyodide test</h1>
+    <!-- Code based on https://pyodide.org/en/stable/usage/index.html#web-browsers -->
+    <script type="text/javascript">
+        async function main() {
+            let pyodide = await loadPyodide();
+            pyodide.runPython(`
+                import sys, os
+                import js
+                js.console.log('Console log from Pyodide')
+                js.console.log('  Python version:', sys.version)
+                js.console.log('  Current working directory:', os.getcwd())
+                js.console.log('  OS environment:', os.environ)
+            `);
+        }
+        main();
+        async function do_something() {
+            let pyodide = await loadPyodide();
+            // Capture python prints
+            pyodide.runPython(`
+                import sys
+                import js
+                class HTMLPrinter:
+                    def __init__(self, node, err=False):
+                        self.node = node
+                        self.fmt = '<span style="color: red;">{}</span>' if err else '{}'
+                    def write(self, message):
+                        self.node.innerHTML += self.fmt.format(message)
+                    def flush(self):
+                        pass
+
+                html_node = js.document.getElementById('py-box')
+                sys.stdout = HTMLPrinter(html_node)
+                sys.stderr = HTMLPrinter(html_node, True)
+                html_node.innerHTML = ''
+                print('<b>HTMLPrinter started<b/>')
+                print('This is a stderr print example', file=sys.stderr)
+            `)
+            // Show some version info
+            await pyodide.loadPackage("numpy");
+            await pyodide.loadPackage("sympy");
+            pyodide.runPython(`
+                import numpy as np, sympy
+                print(f'python: {sys.version}')
+                print(f'numpy: {np.__version__}')
+                print(f'sympy: {sympy.__version__}')
+            `);
+            // Download our modulea from GitHub and run it, block main() execution
+            pythonCode = await (await fetch("../exp_poly_approx.py")).text();
+            pyodide.runPython('__name__=None\n' + pythonCode);
+            // Approximate some data
+            data = document.getElementById('input-data').value
+            pyodide.globals.set('input_data', data)
+            pyodide.runPython(`
+                print(f'Input data: {input_data}')
+                input_data = np.asarray(sympy.sympify(input_data))
+                print(f'Sympify-ed: {input_data}')
+                exp_poly = approximate_data(input_data)
+                print(f'Result: {exp_poly}')
+                latex_equation = sympy.latex(exp_poly)
+                print(f'Result (LaTex): {latex_equation}')
+                latex_equation_simplified = sympy.latex(sympy.simplify(exp_poly))
+                print(f'Result simplified (LaTex): {latex_equation_simplified}')
+            `);
+            let result = pyodide.globals.get('latex_equation');
+            document.getElementById('math-container').innerHTML = '\\(' + result + '\\)';
+            let result_simplified = pyodide.globals.get('latex_equation_simplified');
+            if (result != result_simplified) {
+                document.getElementById('math-container').innerHTML += ' \\(\\longrightarrow' + result_simplified + '\\)';
+            }
+            MathJax.typesetPromise();
+        }
+        do_something();
+    </script>
+    <div>
+        <div style="outline: auto;">
+            <label for="input-data">Input data:</label>
+            <input type="text" id="input-data" name="fname" value="0, 3, 18, 81, 324">
+            <hr />
+            <div id="math-container"><i>Math container</i></div>
+        </div>
+        <div style="outline: auto;">
+            <h3>Here comes the python output</h3>
+            <pre><code id="py-box"><i>Initializing python...</i></code></pre>
+        </div>
+    </div>
+</body>
+
+</html>
