@@ -55,17 +55,17 @@
                 print(f'numpy: {np.__version__}')
                 print(f'sympy: {sympy.__version__}')
             `);
-            // Download our modulea from GitHub and run it, block main() execution
+            // Download our modules from GitHub and run it, block main() execution
             pythonCode = await (await fetch("../exp_poly_approx.py")).text();
             pyodide.runPython('__name__=None\n' + pythonCode);
-            // Approximate some data
+            // Interpolate some data
             data = document.getElementById('input-data').value
             pyodide.globals.set('input_data', data)
             pyodide.runPython(`
                 print(f'Input data: {input_data}')
                 input_data = np.asarray(sympy.sympify(input_data))
                 print(f'Sympify-ed: {input_data}')
-                exp_poly = approximate_data(input_data)
+                exp_poly = interpolate_data(input_data)
                 print(f'Result: {exp_poly}')
                 latex_equation = sympy.latex(exp_poly)
                 print(f'Result (LaTex): {latex_equation}')

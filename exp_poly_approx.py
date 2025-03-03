@@ -1,4 +1,4 @@
-"""Approximation via exponential polynomials
+"""Interpolation/approximation via exponential polynomials
 
 References:
 - YouTube video by Mathologer: https://www.youtube.com/watch?v=NO1_-qptr6c
@@ -7,12 +7,20 @@ References:
 import numpy as np
 import sympy
 import sympy.abc
+import sympy.core.evalf
 import numpy.typing as npt
 
 
 DataArray = npt.NDArray
 IndexArray = npt.NDArray[np.uint8]
 PolyArray = npt.NDArray[np.object_]
+
+# Vectorize some useful `sympy` functions
+sympy_im = np.vectorize(sympy.im, otypes=[object])
+sympy_log = np.vectorize(sympy.log, otypes=[object])
+sympy_evalf = np.vectorize(sympy.core.evalf.EvalfMixin.evalf,
+                           otypes=[complex], excluded=dict(chop=True))
+sympy_latex = np.vectorize(sympy.latex, otypes=[str])
 
 def poly_roots(poly_arr: PolyArray) -> list[DataArray]:
     """Wrapper for `sympy.polys.polyroots.roots()`
@@ -31,7 +39,7 @@ def poly_roots(poly_arr: PolyArray) -> list[DataArray]:
         res.append(root_arr)
     return res
 
-def build_char_poly(data: npt.NDArray, symbol: sympy.Symbol) -> PolyArray:
+def build_char_poly(data: DataArray, symbol: sympy.Symbol) -> PolyArray:
     """Characteristic polynomial"""
     #
     # Starting row of the number-wall
@@ -54,7 +62,7 @@ def build_char_poly(data: npt.NDArray, symbol: sympy.Symbol) -> PolyArray:
         next_row -= cur_row[:-2] * cur_row[2:]
         next_row /= prev_row
         next_row = sympy.simplify(next_row)
-        # Convert back to numpy array as it is easier to work
+        # Convert back to `numpy` array as it is easier to work
         next_row = np.asarray(next_row)
         # Check if it is all zeros
         if not next_row.any():
@@ -66,7 +74,7 @@ def build_char_poly(data: npt.NDArray, symbol: sympy.Symbol) -> PolyArray:
     # Polynomials may be independent (need more data)
     return cur_row
 
-def calc_exponent_bases(data: npt.NDArray) -> tuple[DataArray, IndexArray]:
+def calc_exponent_bases(data: DataArray) -> tuple[DataArray, IndexArray]:
     """Calculate bases of the exponents, identify repeated ones
 
     The exponent bases are the roots of the characteristic polynomial(s).
@@ -88,7 +96,7 @@ def calc_exponent_bases(data: npt.NDArray) -> tuple[DataArray, IndexArray]:
     mean_root_arr = root_arr.mean(0)
     if (mean_root_arr - root_arr).any():
         print('Warning: Characteristic polynomial root deviation: '
-              f' {(mean_root_arr - root_arr).max()}')
+              f' {np.abs(sympy_evalf(mean_root_arr - root_arr)).max()}')
     return mean_root_arr, root_repeat[0]
 
 def solve_coefficients(data: DataArray, exp_bases: DataArray, base_repeats:IndexArray,
@@ -116,34 +124,51 @@ def solve_coefficients(data: DataArray, exp_bases: DataArray, base_repeats:Index
     coefs = sympy.Matrix(equation_mtx) ** -1 * sympy.Matrix(data[:exp_bases.size])
     return np.asarray(coefs)[:,0], x_powers
 
-def build_exp_poly(coefs: DataArray, powers: IndexArray, bases: DataArray, *,
-             symbol: sympy.Symbol=sympy.abc.x) -> sympy.Basic:
+def build_exp_poly(coefs: DataArray, powers: IndexArray,
+                   bases: DataArray, base_repeats: IndexArray, *,
+                   symbol: sympy.Symbol=sympy.abc.x) -> sympy.Expr:
     """Construct exponential polynomial"""
-    exp_poly = (coefs * bases ** symbol * symbol ** powers).sum(0)
-    return sympy.simplify(exp_poly)
+    assert coefs.shape == powers.shape, 'Polynomial coefs do not match powers'
+    assert base_repeats.sum(0) == powers.shape[0], 'Exponential repeats do not match coefs'
+    # The simplest way is to just do:
+    # ```
+    # bases = np.repeat(bases, base_repeats)
+    # exp_poly = (coefs * bases ** symbol * symbol ** powers).sum(0)`
+    # ```
+    # However, this will distribute each exponent over its polynomial components,
+    # which loses the structure of exponential-polynomial.
+    #
+    # Combine polynomials from their components based on corresponding exponent
+    polys = np.full_like(bases, sympy.S.Zero)
+    base_idx = np.repeat(np.arange(base_repeats.shape[0]), base_repeats)
+    np.add.at(polys, base_idx, coefs * symbol ** powers)
+    # Then multiply each one by its exponent and sum
+    return (polys * bases ** symbol).sum(0)
 
-def approximate_data(data: npt.NDArray) -> sympy.Basic:
-    """Generate exponential polynomial to approximate given data"""
+def interpolate_data(data: DataArray, *, simplify: bool=False) -> sympy.Expr:
+    """Generate exponential polynomial to interpolate given data"""
     bases, repeats = calc_exponent_bases(data)
     coefs, powers = solve_coefficients(data, bases, repeats)
-    return build_exp_poly(coefs, powers, np.repeat(bases, repeats))
+    exp_poly = build_exp_poly(coefs, powers, bases, repeats)
+    return sympy.simplify(exp_poly) if simplify else exp_poly
 
 def main(argv):
     """Standalone execution"""
-    dtype = int
-    data = np.fromiter((dtype(v) for v in argv), dtype=dtype)
+    data = sympy.sympify(argv)
+    data = np.squeeze(np.asarray(data))
     print(f'Input data: {data}')
     bases, repeats = calc_exponent_bases(data)
     print(f'  Exponent bases (averaged): {bases}, multiplicity {repeats}')
-    sympy_im = np.vectorize(sympy.im, otypes=[object])
     if sympy_im(bases).any():
-        angles = np.vectorize(sympy.log, otypes=[object])(bases)
-        angles = sympy_im(angles)
+        angles = sympy_im(sympy_log(bases))
         print(f'    period: {2*sympy.pi/angles} samples')
     coefs, powers = solve_coefficients(data, bases, repeats)
     print(f'  Polynomial coefficients: {coefs}')
-    exp_poly = build_exp_poly(coefs, powers, np.repeat(bases, repeats))
+    exp_poly = build_exp_poly(coefs, powers, bases, repeats)
     print(f'  Decomposed function: {sympy.latex(exp_poly)}')
+    print(f'    Simplified: {sympy.latex(sympy.simplify(exp_poly))}')
+    reval = sympy.lambdify(sympy.abc.x, exp_poly, 'numpy')(np.arange(data.size + 3))
+    print(f'  Reevaluate: {reval}')
 
 if __name__ == '__main__':
     import sys
