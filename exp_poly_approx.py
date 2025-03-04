@@ -8,6 +8,7 @@ import numpy as np
 import sympy
 import sympy.abc
 import sympy.core.evalf
+from typing import Iterator
 import numpy.typing as npt
 
 
@@ -39,49 +40,68 @@ def poly_roots(poly_arr: PolyArray) -> list[DataArray]:
         res.append(root_arr)
     return res
 
-def build_char_poly(data: DataArray, symbol: sympy.Symbol) -> PolyArray:
-    """Characteristic polynomial"""
-    #
-    # Starting row of the number-wall
-    # Array of 1-st degree polynomials:
-    # - :math:`a_1 - a_0 x`
-    # - :math:`a_2 - a_1 x`
-    # - ...
-    #
-    cur_row = data[1:] - data[:-1]*symbol
-    # The 'previous' one: all ones
+def number_wall_cross(cur_row: DataArray, prev_row: DataArray) -> DataArray:
+    """Calculate next number-wall row using "cross" rule
+
+    Number-wall "cross" rule:
+    - :math:`\frac{D_{-1,0}^2 - D_{-1,-1} D_{-1,+1}}{D_{-2,0}}`
+    """
+    next_row = cur_row[1:-1] * cur_row[1:-1]
+    next_row -= cur_row[:-2] * cur_row[2:]
+    return next_row / prev_row
+
+def number_wall_gen(start_row: DataArray) -> Iterator[DataArray]:
+    """Number-wall "crosses" generator"""
+    cur_row = start_row
+    yield cur_row
+    # The 'previous' row: all ones
     prev_row = sympy.S.One
     # Build subsequent rows, by apply 'number-wall crosses' rule
     # Finish when all polynomials collapse or no data for the 'crosses'
     while cur_row.shape[0] > 2:
-        #
-        # Number-wall crosses rule
-        # - :math:`\frac{D_{-1,0}^2 - D_{-1,-1} D_{-1,+1}}{D_{-2,0}}`
-        #
-        next_row = cur_row[1:-1] * cur_row[1:-1]
-        next_row -= cur_row[:-2] * cur_row[2:]
-        next_row /= prev_row
-        next_row = sympy.simplify(next_row)
-        # Convert back to `numpy` array as it is easier to work
-        next_row = np.asarray(next_row)
-        # Check if it is all zeros
+        next_row = number_wall_cross(cur_row, prev_row)
+        # Return non-simplified form, to be displayed (may simplify to zero)
+        yield next_row
+        # Simplify for zero-test (and for next iteration)
+        next_row = np.asarray(sympy.simplify(next_row))
         if not next_row.any():
-            # All polynomials are collapsed, return the last one
-            return cur_row
+            # All polynomials collapsed to zeros, stop the generator
+            return
         # Swap to next row
         prev_row = cur_row[2:-2]
         cur_row = next_row
     # Polynomials may be independent (need more data)
-    return cur_row
+    yield np.empty_like(cur_row, shape=0)
 
-def calc_exponent_bases(data: DataArray) -> tuple[DataArray, IndexArray]:
+def poly_number_wall_gen(data: DataArray, symbol: sympy.Symbol) -> Iterator[PolyArray]:
+    """Number-wall of polynomials generator
+
+    Start row of the number-wall is array of 1-st degree polynomials:
+    - :math:`a_1 - a_0 x`
+    - :math:`a_2 - a_1 x`
+    - ...
+    """
+    yield from number_wall_gen(data[1:] - data[:-1]*symbol)
+
+def char_poly_number_wall(data: DataArray, symbol: sympy.Symbol) -> PolyArray:
+    """Characteristic polynomial generator using number-wall approach
+
+    Run number-wall of polynomials till it collapses, take the one before the last
+    """
+    poly_queue = (np.empty_like(data, shape=0),)
+    for poly_arr in poly_number_wall_gen(data, symbol):
+        # Keep queue two elements only
+        poly_queue = poly_queue[-1:] + (poly_arr,)
+    # Note: poly_number_wall_gen() return non-simplified form
+    return np.asarray(sympy.simplify(poly_queue[0]))
+
+def select_exponent_bases(poly_arr: PolyArray) -> tuple[DataArray, IndexArray]:
     """Calculate bases of the exponents, identify repeated ones
 
     The exponent bases are the roots of the characteristic polynomial(s).
     Repeated roots must be handled separately, as they are treated as single
     exponent multiplied by a polynomial, instead of just a constant.
     """
-    poly_arr = build_char_poly(data, sympy.abc.x)
     root_list = poly_roots(poly_arr)
     if not root_list:
         return np.empty(0), np.empty(0, dtype=int)
@@ -142,13 +162,27 @@ def build_exp_poly(coefs: DataArray, powers: IndexArray,
     polys = np.full_like(bases, sympy.S.Zero)
     base_idx = np.repeat(np.arange(base_repeats.shape[0]), base_repeats)
     np.add.at(polys, base_idx, coefs * symbol ** powers)
-    # Then multiply each one by its exponent and sum
-    return (polys * bases ** symbol).sum(0)
+    # Then multiply each one by its exponent and sum, if empty result is still sympy.Expr
+    return (polys * bases ** symbol).sum(0, initial=sympy.S.Zero)
 
-def interpolate_data(data: DataArray, *, simplify: bool=False) -> sympy.Expr:
-    """Generate exponential polynomial to interpolate given data"""
-    bases, repeats = calc_exponent_bases(data)
+def interpolate_number_wall(data: DataArray, *, simplify: bool=False) -> sympy.Expr:
+    """Generate exponential polynomial to interpolate given data
+
+    This uses number-wall of polynomials approach:
+    - Build characteristic polynomial from number-wall crosses
+    - Use its roots as the exponent bases
+    - Solve for exponent coefficients (which are polynomials)
+    """
+    # Fid characteristic polynomial, its roots are the exponent bases
+    char_poly_arr = char_poly_number_wall(data, sympy.abc.x)
+    print(f'  Characteristic polynomial(s): {char_poly_arr}')
+    bases, repeats = select_exponent_bases(char_poly_arr)
+    print(f'  Exponent bases (averaged): {bases}, multiplicity {repeats}')
+    if sympy_im(bases).any():
+        angles = sympy_im(sympy_log(bases))
+        print(f'    period: {2*sympy.pi/angles} samples')
     coefs, powers = solve_coefficients(data, bases, repeats)
+    print(f'  Polynomial coefficients: {coefs}')
     exp_poly = build_exp_poly(coefs, powers, bases, repeats)
     return sympy.simplify(exp_poly) if simplify else exp_poly
 
@@ -157,14 +191,7 @@ def main(argv):
     data = sympy.sympify(argv)
     data = np.squeeze(np.asarray(data))
     print(f'Input data: {data}')
-    bases, repeats = calc_exponent_bases(data)
-    print(f'  Exponent bases (averaged): {bases}, multiplicity {repeats}')
-    if sympy_im(bases).any():
-        angles = sympy_im(sympy_log(bases))
-        print(f'    period: {2*sympy.pi/angles} samples')
-    coefs, powers = solve_coefficients(data, bases, repeats)
-    print(f'  Polynomial coefficients: {coefs}')
-    exp_poly = build_exp_poly(coefs, powers, bases, repeats)
+    exp_poly = interpolate_number_wall(data)
     print(f'  Decomposed function: {sympy.latex(exp_poly)}')
     print(f'    Simplified: {sympy.latex(sympy.simplify(exp_poly))}')
     reval = sympy.lambdify(sympy.abc.x, exp_poly, 'numpy')(np.arange(data.size + 3))

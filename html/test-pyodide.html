@@ -64,7 +64,7 @@
                     print(f'Input data: {data}')
                     data = np.asarray(sympy.sympify(data))
                     print(f'Sympify-ed: {data}')
-                    exp_poly = interpolate_data(data)
+                    exp_poly = interpolate_number_wall(data)
                     print(f'Result: {exp_poly}')
                     # LaTex
                     latex_equation = sympy.latex(exp_poly)
