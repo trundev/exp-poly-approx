@@ -1,99 +1,129 @@
 <!DOCTYPE html>
 <html>
-
-<head>
+  <head>
     <meta charset="UTF-8" />
     <title>Python in Browser with Pyodide</title>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js"></script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-</head>
+    <script
+      id="MathJax-script"
+      async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+    ></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
 
-<body>
+  <body>
     <h1>This is a Pyodide test</h1>
     <!-- Code based on https://pyodide.org/en/stable/usage/index.html#web-browsers -->
     <script type="text/javascript">
-        async function main() {
-            let pyodide = await loadPyodide();
-            pyodide.runPython(`
-                import sys, os
-                import js
-                js.console.log('Console log from Pyodide')
-                js.console.log('  Python version:', sys.version)
-                js.console.log('  Current working directory:', os.getcwd())
-                js.console.log('  OS environment:', os.environ)
-            `);
-        }
-        main();
-        async function do_something() {
-            let pyodide = await loadPyodide();
-            // Capture python prints
-            pyodide.runPython(`
+      async function main() {
+        let pyodide = await loadPyodide();
+        // Capture python prints
+        pyodide.globals.set("html_node", document.getElementById("py-box"));
+        pyodide.runPython(`
                 import sys
                 import js
                 class HTMLPrinter:
                     def __init__(self, node, err=False):
                         self.node = node
+                        self.err = err
                         self.fmt = '<span style="color: red;">{}</span>' if err else '{}'
                     def write(self, message):
+                        keep_vis = self.err or self.node.scrollTop == self.node.scrollHeight - self.node.clientHeight
                         self.node.innerHTML += self.fmt.format(message)
+                        if keep_vis:
+                            self.node.scrollTop = self.node.scrollHeight
                     def flush(self):
                         pass
 
-                html_node = js.document.getElementById('py-box')
                 sys.stdout = HTMLPrinter(html_node)
                 sys.stderr = HTMLPrinter(html_node, True)
                 html_node.innerHTML = ''
                 print('<b>HTMLPrinter started<b/>')
                 print('This is a stderr print example', file=sys.stderr)
-            `)
-            // Show some version info
-            await pyodide.loadPackage("numpy");
-            await pyodide.loadPackage("sympy");
-            pyodide.runPython(`
+            `);
+        // Show some version info
+        await pyodide.loadPackage("numpy");
+        await pyodide.loadPackage("sympy");
+        pyodide.runPython(`
+                import pyodide
                 import numpy as np, sympy
                 print(f'python: {sys.version}')
+                print(f'Pyodide: {pyodide.__version__}')
                 print(f'numpy: {np.__version__}')
                 print(f'sympy: {sympy.__version__}')
             `);
-            // Download our modules from GitHub and run it, block main() execution
-            pythonCode = await (await fetch("../exp_poly_approx.py")).text();
-            pyodide.runPython('__name__=None\n' + pythonCode);
-            // Interpolate some data
-            data = document.getElementById('input-data').value
-            pyodide.globals.set('input_data', data)
-            pyodide.runPython(`
-                print(f'Input data: {input_data}')
-                input_data = np.asarray(sympy.sympify(input_data))
-                print(f'Sympify-ed: {input_data}')
-                exp_poly = interpolate_data(input_data)
-                print(f'Result: {exp_poly}')
-                latex_equation = sympy.latex(exp_poly)
-                print(f'Result (LaTex): {latex_equation}')
-                latex_equation_simplified = sympy.latex(sympy.simplify(exp_poly))
-                print(f'Result simplified (LaTex): {latex_equation_simplified}')
+        // Download our modules from GitHub and run it, block main() execution
+        pythonCode = await (await fetch("../exp_poly_approx.py")).text();
+        pyodide.globals.set("__name__", null);
+        pyodide.runPython(pythonCode);
+        // Handle Recalculate button
+        pyodide.runPythonAsync(`
+                def on_recalc_btn_click(data):
+                    print('<hr />')
+                    print(f'Input data: {data}')
+                    data = np.asarray(sympy.sympify(data))
+                    print(f'Sympify-ed: {data}')
+                    exp_poly = interpolate_data(data)
+                    print(f'Result: {exp_poly}')
+                    # LaTex
+                    latex_equation = sympy.latex(exp_poly)
+                    print(f'Result (LaTex): {latex_equation}')
+                    latex_equation_simplified = sympy.latex(sympy.simplify(exp_poly))
+                    print(f'Result simplified (LaTex): {latex_equation_simplified}')
+                    # Re-evaluate
+                    reval = sympy.lambdify(sympy.abc.x, exp_poly, 'numpy')(np.arange(data.size + 3))
+                    print(f'Reevaluate: {reval}')
+                    return latex_equation, latex_equation_simplified, np.array2string(reval, separator=',')
+                print('Ready!')
             `);
-            let result = pyodide.globals.get('latex_equation');
-            document.getElementById('math-container').innerHTML = '\\(' + result + '\\)';
-            let result_simplified = pyodide.globals.get('latex_equation_simplified');
-            if (result != result_simplified) {
-                document.getElementById('math-container').innerHTML += ' \\(\\longrightarrow' + result_simplified + '\\)';
-            }
-            MathJax.typesetPromise();
-        }
-        do_something();
+        btn = document.getElementById("recalc-btn");
+        btn.disabled = false;
+        // Handle "Recalculate" click
+        btn.onclick = () => {
+          btn.disabled = true;
+          data = document.getElementById("input-data").value;
+          const result = pyodide.runPython("on_recalc_btn_click(data)", {
+            locals: pyodide.toPy({ data: data }),
+          });
+          // result is a tuple of two latex strings and re-evaluated data
+          document.getElementById("math-container").innerHTML =
+            "\\(" + result[0] + "\\)";
+          if (result[0] != result[1]) {
+            document.getElementById("math-container").innerHTML +=
+              " \\(\\longrightarrow" + result[1] + "\\)";
+          }
+          MathJax.typesetPromise();
+          document.getElementById("eval-container").innerHTML = result[2];
+          btn.disabled = false;
+        };
+      }
+      main();
     </script>
     <div>
-        <div style="outline: auto;">
-            <label for="input-data">Input data:</label>
-            <input type="text" id="input-data" name="fname" value="0, 3, 18, 81, 324">
-            <hr />
-            <div id="math-container"><i>Math container</i></div>
+      <div class="main-box">
+        <label for="input-data">Input data:</label>
+        <input
+          type="text"
+          id="input-data"
+          name="fname"
+          value="0, 3, 18, 81, 324"
+        />
+        <button id="recalc-btn" disabled>Recalculate</button>
+        <hr />
+        <div>
+          Result:
+          <span id="math-container"><i>Math container</i></span>
         </div>
-        <div style="outline: auto;">
-            <h3>Here comes the python output</h3>
-            <pre><code id="py-box"><i>Initializing python...</i></code></pre>
+        <div>
+          Reevaluation:
+          <span id="eval-container"><i>...</i></span>
         </div>
+      </div>
+      <div>
+        <h3>Here comes the python output</h3>
+        <pre id="py-box"><i>Initializing python...</i></pre>
+      </div>
     </div>
-</body>
-
+  </body>
 </html>

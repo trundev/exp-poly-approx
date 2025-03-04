@@ -1,0 +1,26 @@
+.main-box
+{
+  outline: auto;
+  padding: 20px;
+}
+/* Input data */
+#input-data {
+  border-style: inset;
+  width: 50%;
+}
+#recalc-btn {
+  outline: auto;
+}
+/* Result */
+#math-container, #eval-container {
+  padding: 20px;
+}
+/* Python output box */
+#py-box {
+  border-style: outset;
+  padding: 10px;
+  max-height: 400px;
+  overflow: auto;
+  font-family: monospace;
+  white-space: pre;
+}
