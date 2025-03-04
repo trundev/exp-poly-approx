@@ -1,5 +1,4 @@
-.main-box
-{
+.main-box {
   outline: auto;
   padding: 20px;
 }
@@ -12,8 +11,36 @@
   outline: auto;
 }
 /* Result */
-#math-container, #eval-container {
+#math-container,
+#eval-container {
   padding: 20px;
+}
+/* Details */
+.details-box {
+  padding: 20px;
+}
+#details-table {
+  border-collapse: collapse;
+}
+#details-table th {
+  background-color: gray;
+}
+#details-table td {
+  border-right: 1px solid black;
+  padding: 8px;
+}
+#details-table td:last-child {
+  border-right: none;
+}
+/* These selectors must match the JavaScript code */
+.poly-raw {
+  display: block;
+}
+.poly-simplify {
+  display: none;
+}
+.poly-factor {
+  display: none;
 }
 /* Python output box */
 #py-box {
@@ -23,4 +50,7 @@
   overflow: auto;
   font-family: monospace;
   white-space: pre;
+}
+.stderr {
+  color: red;
 }

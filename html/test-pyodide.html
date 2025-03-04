@@ -2,100 +2,128 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>Python in Browser with Pyodide</title>
+    <title>Exponential polynomial from number-wall</title>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js"></script>
     <script
       id="MathJax-script"
       async
       src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
     ></script>
+    <script src="tools.js"></script>
     <link rel="stylesheet" href="style.css" />
   </head>
 
   <body>
-    <h1>This is a Pyodide test</h1>
+    <h1>Exponential polynomial using number-wall of polynomials</h1>
     <!-- Code based on https://pyodide.org/en/stable/usage/index.html#web-browsers -->
     <script type="text/javascript">
       async function main() {
-        let pyodide = await loadPyodide();
-        // Capture python prints
-        pyodide.globals.set("html_node", document.getElementById("py-box"));
-        pyodide.runPython(`
-                import sys
-                import js
-                class HTMLPrinter:
-                    def __init__(self, node, err=False):
-                        self.node = node
-                        self.err = err
-                        self.fmt = '<span style="color: red;">{}</span>' if err else '{}'
-                    def write(self, message):
-                        keep_vis = self.err or self.node.scrollTop == self.node.scrollHeight - self.node.clientHeight
-                        self.node.innerHTML += self.fmt.format(message)
-                        if keep_vis:
-                            self.node.scrollTop = self.node.scrollHeight
-                    def flush(self):
-                        pass
+        // Load Pyodide and all common Python code
+        let pyodide = await load_python("py-box");
 
-                sys.stdout = HTMLPrinter(html_node)
-                sys.stderr = HTMLPrinter(html_node, True)
-                html_node.innerHTML = ''
-                print('<b>HTMLPrinter started<b/>')
-                print('This is a stderr print example', file=sys.stderr)
-            `);
-        // Show some version info
-        await pyodide.loadPackage("numpy");
-        await pyodide.loadPackage("sympy");
-        pyodide.runPython(`
-                import pyodide
-                import numpy as np, sympy
-                print(f'python: {sys.version}')
-                print(f'Pyodide: {pyodide.__version__}')
-                print(f'numpy: {np.__version__}')
-                print(f'sympy: {sympy.__version__}')
-            `);
-        // Download our modules from GitHub and run it, block main() execution
-        pythonCode = await (await fetch("../exp_poly_approx.py")).text();
-        pyodide.globals.set("__name__", null);
-        pyodide.runPython(pythonCode);
         // Handle Recalculate button
         pyodide.runPythonAsync(`
-                def on_recalc_btn_click(data):
-                    print('<hr />')
-                    print(f'Input data: {data}')
-                    data = np.asarray(sympy.sympify(data))
-                    print(f'Sympify-ed: {data}')
-                    exp_poly = interpolate_number_wall(data)
-                    print(f'Result: {exp_poly}')
-                    # LaTex
-                    latex_equation = sympy.latex(exp_poly)
-                    print(f'Result (LaTex): {latex_equation}')
-                    latex_equation_simplified = sympy.latex(sympy.simplify(exp_poly))
-                    print(f'Result simplified (LaTex): {latex_equation_simplified}')
-                    # Re-evaluate
-                    reval = sympy.lambdify(sympy.abc.x, exp_poly, 'numpy')(np.arange(data.size + 3))
-                    print(f'Reevaluate: {reval}')
-                    return latex_equation, latex_equation_simplified, np.array2string(reval, separator=',')
-                print('Ready!')
-            `);
-        btn = document.getElementById("recalc-btn");
+              def update_num_wall_details(data, table):
+                  table.innerHTML = ''
+                  data = np.asarray(sympy.sympify(data))
+                  append_table_row(table, np.arange(data.size), 'th')
+                  append_table_row(table, data)
+
+                  print(f'Break-down calculations')
+                  text = np.full(data.size, '1', dtype=object)
+                  append_table_row(table, text, td_tag='th')
+                  mask = np.empty_like(data, dtype=bool)
+                  last_root_arr = np.full(data.size, '', dtype=object)
+                  symbol = sympy.abc.x
+                  for i, poly_arr in enumerate(poly_number_wall_gen(data, symbol)):
+                      print(f'Number-wall row {i} ({poly_arr.size}): {poly_arr}')
+                      # Insert in the table row by padding
+                      mask[...] = False
+                      mask[i:i+poly_arr.size] = True
+                      text[...] = ''
+                      # Raw polynomials with TeX Delimiters for MathJax
+                      text[mask] = '$$' + sympy_latex(poly_arr) + '$$'
+                      div = arr_create_elem_with_content('div', text)
+                      arr_elem_set_attribute(div, 'class', 'poly-raw')
+                      _, td = append_table_row(table, div, td_tag='td')
+                      # Simplified polynomials
+                      if poly_arr.size == 0:
+                          continue
+                      poly_arr = np.asarray(sympy.simplify(poly_arr))
+                      text[mask] = '$$' + sympy_latex(poly_arr) + '$$'
+                      div = arr_create_elem_with_content('div', text)
+                      arr_elem_set_attribute(div, 'class', 'poly-simplify')
+                      arr_append_child(td, div)
+                      # Factored polynomials
+                      text[mask] = '$$' + sympy_latex(sympy.factor(poly_arr)) + '$$'
+                      div = arr_create_elem_with_content('div', text)
+                      arr_elem_set_attribute(div, 'class', 'poly-factor')
+                      arr_append_child(td, div)
+                      # Keep roots for later
+                      roots = np.vectorize(sympy.roots, otypes=[object])(poly_arr, symbol)
+                      last_root_arr[mask] = roots
+                  # Roots in the last row
+                  _, th = append_table_row(table, 'Roots', td_tag='th')
+                  arr_elem_set_attribute(th, 'colspan', data.size)
+                  append_table_row(table, last_root_arr, td_tag='td')
+                  # Show math formulas
+                  js.MathJax.typesetPromise()
+                  print(f'Table #{table.id} updated')
+
+              def recalc_num_wall(data):
+                  print('<hr />')
+                  print(f'Input data: {data}')
+                  data = np.asarray(sympy.sympify(data))
+                  print(f'Sympify-ed: {data}')
+                  exp_poly = interpolate_number_wall(data)
+                  print(f'Result: {exp_poly}')
+                  # LaTex
+                  latex_equation = sympy.latex(exp_poly)
+                  print(f'Result (LaTex): {latex_equation}')
+                  latex_equation_simplified = sympy.latex(sympy.simplify(exp_poly))
+                  print(f'Result simplified (LaTex): {latex_equation_simplified}')
+                  # Re-evaluate
+                  re_eval = np.vectorize(exp_poly.subs)(sympy.abc.x, np.arange(data.size + 3))
+                  print(f'Reevaluate: {re_eval}')
+                  return latex_equation, latex_equation_simplified, sympy_latex(re_eval).tolist()
+              print('Ready!')
+          `);
+        let btn = document.getElementById("recalc-btn");
         btn.disabled = false;
         // Handle "Recalculate" click
         btn.onclick = () => {
           btn.disabled = true;
-          data = document.getElementById("input-data").value;
-          const result = pyodide.runPython("on_recalc_btn_click(data)", {
-            locals: pyodide.toPy({ data: data }),
-          });
-          // result is a tuple of two latex strings and re-evaluated data
-          document.getElementById("math-container").innerHTML =
-            "\\(" + result[0] + "\\)";
-          if (result[0] != result[1]) {
-            document.getElementById("math-container").innerHTML +=
-              " \\(\\longrightarrow" + result[1] + "\\)";
+          let data = document.getElementById("input-data").value;
+          let equation = "";
+          let equation_simplified = equation;
+          let re_eval = "";
+          try {
+            const result = pyodide.runPython("recalc_num_wall(data)", {
+              locals: pyodide.toPy({ data: data }),
+            });
+            // Unpack the result - two latex strings and list of latex strings
+            [equation, equation_simplified, re_eval] = result;
+            re_eval = re_eval.map((element) => `\\(${element}\\)`);
+          } catch (error) {
+            re_eval = error;
           }
+          // Update "result" HTML elements
+          document.getElementById("math-container").innerHTML =
+            "\\(" + equation + "\\)";
+          if (equation != equation_simplified) {
+            document.getElementById("math-container").innerHTML +=
+              " \\(\\longrightarrow " + equation_simplified + "\\)";
+          }
+          document.getElementById("eval-container").innerHTML = re_eval;
           MathJax.typesetPromise();
-          document.getElementById("eval-container").innerHTML = result[2];
           btn.disabled = false;
+          // Update internal steps details (async)
+          pyodide.runPythonAsync("update_num_wall_details(data, table)", {
+            locals: pyodide.toPy({
+              data: data,
+              table: document.getElementById("details-table"),
+            }),
+          });
         };
       }
       main();
@@ -107,9 +135,13 @@
           type="text"
           id="input-data"
           name="fname"
-          value="0, 3, 18, 81, 324"
+          value="750, 21, 264, 183, 210, 201"
         />
         <button id="recalc-btn" disabled>Recalculate</button>
+        <p>
+          Hint: try "1, 2, 4, 8" <i>(1-degree)</i>; "0, 1, 2, 3, 4, 5"
+          <i>(2-degree)</i>; "0, 1, 4, 9, 16, 25, 36, 49" <i>(3-degree)</i>
+        </p>
         <hr />
         <div>
           Result:
@@ -120,6 +152,33 @@
           <span id="eval-container"><i>...</i></span>
         </div>
       </div>
+      <fieldset class="details-box">
+        <legend>Details</legend>
+        <table id="details-table"></table>
+        <label>Display:</label>
+        <label>
+          <input
+            type="radio"
+            name="poly-type"
+            checked="true"
+            onchange="show_by_class('.poly-raw', ['.poly-simplify', '.poly-factor'])"
+          />Raw polynomials
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="poly-type"
+            onchange="show_by_class('.poly-simplify', ['.poly-raw', '.poly-factor'])"
+          />Simplified polynomials
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="poly-type"
+            onchange="show_by_class('.poly-factor', ['.poly-raw', '.poly-simplify'])"
+          />Factored polynomials
+        </label>
+      </fieldset>
       <div>
         <h3>Here comes the python output</h3>
         <pre id="py-box"><i>Initializing python...</i></pre>
