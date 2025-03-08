@@ -187,6 +187,14 @@ def interpolate_number_wall(data: DataArray, *, simplify: bool=False) -> sympy.E
     exp_poly = build_exp_poly(coefs, powers, bases, repeats)
     return sympy.simplify(exp_poly) if simplify else exp_poly
 
+def interpolate_toeplitz(data: DataArray, *, simplify: bool=False) -> sympy.Expr:
+    """Generate exponential polynomial to interpolate given data
+
+    This uses minor determinants of Toeplitz matrix
+    """
+    print(f'TODO: Replace this with actual implementation', file=sys.stderr)
+    return sympy.S.Zero
+
 def main(argv):
     """Standalone execution"""
     data = sympy.sympify(argv)

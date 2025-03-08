@@ -8,7 +8,10 @@ Examples running in GitHub pages
 > - `Branch`: `github.io` _(name of the branch with the HTMLs)_
 
 
-- [Pyodide](https://pyodide.org/) test page
-  https://trundev.github.io/exp-poly-approx/html/test-pyodide.html
+- Interpolation using Number-wall approach:
 
-- [Brython](https://brython.info/static_doc/3.13/en/intro.html) test (TODO)
+  [number-wall-interpolation.html](number-wall-interpolation.html)
+
+- Interpolation using determinant of [Toeplitz matrix](https://en.wikipedia.org/wiki/Toeplitz_matrix) approach:
+
+  [toeplitz-matrix-interpolation.html](toeplitz-matrix-interpolation.html)

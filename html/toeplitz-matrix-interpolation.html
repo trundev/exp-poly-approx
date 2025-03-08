@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Exponential polynomial from Toeplitz matrix</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js"></script>
+    <script
+      id="MathJax-script"
+      async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+    ></script>
+    <script src="tools.js"></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+
+  <body>
+    <h1>Exponential polynomial using determinant of Toeplitz matrix</h1>
+    <script type="text/javascript">
+      async function main() {
+        // Load Pyodide and all common Python code
+        let pyodide = await load_python("py-box");
+
+        // Handle Recalculate button
+        pyodide.runPythonAsync(`
+              def update_toeplitz_details(data, table):
+                  table.innerHTML = ''
+                  data = np.asarray(sympy.sympify(data))
+                  #TODO: Generate details
+                  # Show math formulas
+                  js.MathJax.typesetPromise()
+                  print(f'Table #{table.id} updated')
+
+              def recalc_toeplitz(data):
+                  print('<hr />')
+                  print(f'Input data: {data}')
+                  data = np.asarray(sympy.sympify(data))
+                  print(f'Sympify-ed: {data}')
+                  exp_poly = interpolate_toeplitz(data)
+                  print(f'Result: {exp_poly}')
+                  # LaTex
+                  latex_equation = sympy.latex(exp_poly)
+                  print(f'Result (LaTex): {latex_equation}')
+                  latex_equation_simplified = sympy.latex(sympy.simplify(exp_poly))
+                  print(f'Result simplified (LaTex): {latex_equation_simplified}')
+                  # Re-evaluate
+                  re_eval = np.vectorize(exp_poly.subs)(sympy.abc.x, np.arange(data.size + 3))
+                  print(f'Reevaluate: {re_eval}')
+                  return latex_equation, latex_equation_simplified, sympy_latex(re_eval).tolist()
+              print('Ready!')
+          `);
+        let btn = document.getElementById("recalc-btn");
+        btn.disabled = false;
+        // Handle "Recalculate" click
+        btn.onclick = () => {
+          btn.disabled = true;
+          let data = document.getElementById("input-data").value;
+          let equation = "";
+          let equation_simplified = equation;
+          let re_eval = "";
+          try {
+            const result = pyodide.runPython("recalc_toeplitz(data)", {
+              locals: pyodide.toPy({ data: data }),
+            });
+            // Unpack the result - two latex strings and list of latex strings
+            [equation, equation_simplified, re_eval] = result;
+            re_eval = re_eval.map((element) => `\\(${element}\\)`);
+          } catch (error) {
+            re_eval = error;
+          }
+          // Update "result" HTML elements
+          document.getElementById("math-container").innerHTML =
+            "\\(" + equation + "\\)";
+          if (equation != equation_simplified) {
+            document.getElementById("math-container").innerHTML +=
+              " \\(\\longrightarrow " + equation_simplified + "\\)";
+          }
+          document.getElementById("eval-container").innerHTML = re_eval;
+          MathJax.typesetPromise();
+          btn.disabled = false;
+          // Update internal steps details (async)
+          pyodide.runPythonAsync("update_toeplitz_details(data, table)", {
+            locals: pyodide.toPy({
+              data: data,
+              table: document.getElementById("details-table"),
+            }),
+          });
+        };
+      }
+      main();
+    </script>
+    <div>
+      <div class="main-box">
+        <label for="input-data">Input data:</label>
+        <input
+          type="text"
+          id="input-data"
+          value="750, 21, 264, 183, 210, 201"
+        />
+        <button id="recalc-btn" disabled>Recalculate</button>
+        <p>
+          Hint: try "1, 2, 4, 8" <i>(1-degree)</i>; "0, 1, 2, 3, 4, 5"
+          <i>(2-degree)</i>; "0, 1, 4, 9, 16, 25, 36, 49" <i>(3-degree)</i>
+        </p>
+        <hr />
+        <div>
+          Result:
+          <span id="math-container"><i>Math container</i></span>
+        </div>
+        <div>
+          Reevaluation:
+          <span id="eval-container"><i>...</i></span>
+        </div>
+      </div>
+      <fieldset class="details-box">
+        <legend>Details</legend>
+        <table id="details-table"></table>
+      </fieldset>
+      <div>
+        <h3>Here comes the python output</h3>
+        <pre id="py-box"><i>Initializing python...</i></pre>
+      </div>
+    </div>
+  </body>
+</html>
