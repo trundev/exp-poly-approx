@@ -15,7 +15,6 @@
 
   <body>
     <h1>Exponential polynomial using number-wall of polynomials</h1>
-    <!-- Code based on https://pyodide.org/en/stable/usage/index.html#web-browsers -->
     <script type="text/javascript">
       async function main() {
         // Load Pyodide and all common Python code
@@ -93,7 +92,7 @@
         // Handle "Recalculate" click
         btn.onclick = () => {
           btn.disabled = true;
-          let data = document.getElementById("input-data").value;
+          const data = document.getElementById("input-data").value;
           let equation = "";
           let equation_simplified = equation;
           let re_eval = "";
@@ -112,7 +111,7 @@
             "\\(" + equation + "\\)";
           if (equation != equation_simplified) {
             document.getElementById("math-container").innerHTML +=
-              " \\(\\longrightarrow " + equation_simplified + "\\)";
+              " \\(\\longrightarrow\\)\\(" + equation_simplified + "\\)";
           }
           document.getElementById("eval-container").innerHTML = re_eval;
           MathJax.typesetPromise();

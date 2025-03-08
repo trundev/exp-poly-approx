@@ -25,7 +25,25 @@
               def update_toeplitz_details(data, table):
                   table.innerHTML = ''
                   data = np.asarray(sympy.sympify(data))
-                  #TODO: Generate details
+                  matrix = get_toeplitz_matrix(data)
+
+                  print(f'Break-down calculations')
+                  # First, Toeplitz matrix
+                  append_table_row(table, np.arange(data.size//2, data.size+1), 'th')
+                  for row in matrix:
+                      append_table_row(table, row)
+                  # Next, characteristic polynomial
+                  _, th = append_table_row(table, 'Characteristic polynomial', td_tag='th')
+                  arr_elem_set_attribute(th, 'colspan', matrix.shape[1])
+                  symbol = sympy.abc.x
+                  char_poly = char_poly_toeplitz(matrix, symbol)
+                  _, td = append_table_row(table, '$$' + sympy.latex(char_poly) + '$$', td_tag='td')
+                  arr_elem_set_attribute(td, 'colspan', matrix.shape[1])
+                  # Roots in the last row
+                  _, th = append_table_row(table, 'Roots', td_tag='th')
+                  arr_elem_set_attribute(th, 'colspan', matrix.shape[1])
+                  _, td = append_table_row(table, sympy.roots(char_poly, symbol), td_tag='td')
+                  arr_elem_set_attribute(td, 'colspan', matrix.shape[1])
                   # Show math formulas
                   js.MathJax.typesetPromise()
                   print(f'Table #{table.id} updated')
@@ -53,7 +71,7 @@
         // Handle "Recalculate" click
         btn.onclick = () => {
           btn.disabled = true;
-          let data = document.getElementById("input-data").value;
+          const data = document.getElementById("input-data").value;
           let equation = "";
           let equation_simplified = equation;
           let re_eval = "";
@@ -72,7 +90,7 @@
             "\\(" + equation + "\\)";
           if (equation != equation_simplified) {
             document.getElementById("math-container").innerHTML +=
-              " \\(\\longrightarrow " + equation_simplified + "\\)";
+              " \\(\\longrightarrow\\)\\(" + equation_simplified + "\\)";
           }
           document.getElementById("eval-container").innerHTML = re_eval;
           MathJax.typesetPromise();

@@ -40,6 +40,58 @@ def poly_roots(poly_arr: PolyArray, symbol: sympy.Symbol) -> list[DataArray]:
         res.append(root_arr)
     return res
 
+#
+# Regular polynomial utilities
+#
+def solve_coefficients(data: DataArray, exp_bases: DataArray, base_repeats:IndexArray,
+                       x0=0) -> tuple[DataArray, IndexArray]:
+    """Find the coefficients of polynomial multiplying each exponent"""
+    exp_bases = np.repeat(exp_bases, base_repeats)
+    # Select powers of the polynomial:
+    # Repeated exponent bases share the same polynomial,
+    # so base-repetition increases the x-power (polynomial degree)
+    mask = np.repeat(np.arange(base_repeats.shape[0]), base_repeats)
+    mask = mask[1:] == mask[:-1]
+    x_powers = np.zeros_like(base_repeats, shape=base_repeats.sum(0))
+    idx = 1
+    while mask.any():
+        x_powers[idx:] += mask
+        mask = mask[1:] & mask[:-1]
+        idx += 1
+    # Range of the polynomial argument (x)
+    x_range = x0 + np.arange(exp_bases.shape[-1], dtype=exp_bases.dtype)[...,np.newaxis]
+    # Spread polynomial: x^{n}
+    equation_mtx = x_range ** x_powers
+    # Spread exponent: b^{x}
+    equation_mtx *= exp_bases ** x_range
+    # Solve the system of equations
+    coefs = sympy.Matrix(equation_mtx) ** -1 * sympy.Matrix(data[:exp_bases.size])
+    return np.asarray(coefs)[:,0], x_powers
+
+def build_exp_poly(coefs: DataArray, powers: IndexArray,
+                   bases: DataArray, base_repeats: IndexArray, *,
+                   symbol: sympy.Symbol=sympy.abc.x) -> sympy.Expr:
+    """Construct exponential polynomial"""
+    assert coefs.shape == powers.shape, 'Polynomial coefs do not match powers'
+    assert base_repeats.sum(0) == powers.shape[0], 'Exponential repeats do not match coefs'
+    # The simplest way is to just do:
+    # ```
+    # bases = np.repeat(bases, base_repeats)
+    # exp_poly = (coefs * bases ** symbol * symbol ** powers).sum(0)`
+    # ```
+    # However, this will distribute each exponent over its polynomial components,
+    # which loses the structure of exponential-polynomial.
+    #
+    # Combine polynomials from their components based on corresponding exponent
+    polys = np.full_like(bases, sympy.S.Zero)
+    base_idx = np.repeat(np.arange(base_repeats.shape[0]), base_repeats)
+    np.add.at(polys, base_idx, coefs * symbol ** powers)
+    # Then multiply each one by its exponent and sum, if empty result is still sympy.Expr
+    return (polys * bases ** symbol).sum(0, initial=sympy.S.Zero)
+
+#
+# Number-wall approach
+#
 def number_wall_cross(cur_row: DataArray, prev_row: DataArray) -> DataArray:
     """Calculate next number-wall row using "cross" rule
 
@@ -119,52 +171,6 @@ def select_exponent_bases(poly_arr: PolyArray, symbol: sympy.Symbol) -> tuple[Da
               f' {np.abs(sympy_evalf(mean_root_arr - root_arr)).max()}', file=sys.stderr)
     return mean_root_arr, root_repeat[0]
 
-def solve_coefficients(data: DataArray, exp_bases: DataArray, base_repeats:IndexArray,
-                       x0=0) -> tuple[DataArray, IndexArray]:
-    """Find the coefficients of polynomial multiplying each exponent"""
-    exp_bases = np.repeat(exp_bases, base_repeats)
-    # Select powers of the polynomial:
-    # Repeated exponent bases share the same polynomial,
-    # so base-repetition increases the x-power (polynomial degree)
-    mask = np.repeat(np.arange(base_repeats.shape[0]), base_repeats)
-    mask = mask[1:] == mask[:-1]
-    x_powers = np.zeros_like(base_repeats, shape=base_repeats.sum(0))
-    idx = 1
-    while mask.any():
-        x_powers[idx:] += mask
-        mask = mask[1:] & mask[:-1]
-        idx += 1
-    # Range of the polynomial argument (x)
-    x_range = x0 + np.arange(exp_bases.shape[-1], dtype=exp_bases.dtype)[...,np.newaxis]
-    # Spread polynomial: x^{n}
-    equation_mtx = x_range ** x_powers
-    # Spread exponent: b^{x}
-    equation_mtx *= exp_bases ** x_range
-    # Solve the system of equations
-    coefs = sympy.Matrix(equation_mtx) ** -1 * sympy.Matrix(data[:exp_bases.size])
-    return np.asarray(coefs)[:,0], x_powers
-
-def build_exp_poly(coefs: DataArray, powers: IndexArray,
-                   bases: DataArray, base_repeats: IndexArray, *,
-                   symbol: sympy.Symbol=sympy.abc.x) -> sympy.Expr:
-    """Construct exponential polynomial"""
-    assert coefs.shape == powers.shape, 'Polynomial coefs do not match powers'
-    assert base_repeats.sum(0) == powers.shape[0], 'Exponential repeats do not match coefs'
-    # The simplest way is to just do:
-    # ```
-    # bases = np.repeat(bases, base_repeats)
-    # exp_poly = (coefs * bases ** symbol * symbol ** powers).sum(0)`
-    # ```
-    # However, this will distribute each exponent over its polynomial components,
-    # which loses the structure of exponential-polynomial.
-    #
-    # Combine polynomials from their components based on corresponding exponent
-    polys = np.full_like(bases, sympy.S.Zero)
-    base_idx = np.repeat(np.arange(base_repeats.shape[0]), base_repeats)
-    np.add.at(polys, base_idx, coefs * symbol ** powers)
-    # Then multiply each one by its exponent and sum, if empty result is still sympy.Expr
-    return (polys * bases ** symbol).sum(0, initial=sympy.S.Zero)
-
 def interpolate_number_wall(data: DataArray, *, simplify: bool=False) -> sympy.Expr:
     """Generate exponential polynomial to interpolate given data
 
@@ -187,20 +193,71 @@ def interpolate_number_wall(data: DataArray, *, simplify: bool=False) -> sympy.E
     exp_poly = build_exp_poly(coefs, powers, bases, repeats)
     return sympy.simplify(exp_poly) if simplify else exp_poly
 
+#
+# Toeplitz matrix approach
+#
+def get_toeplitz_matrix(data: DataArray) -> DataArray:
+    """Build Toeplitz matrix from given data (even number of elements only)
+
+    Data are ordered in {n-1} by {n} matrix like:
+    .. math::
+        D_n     D_{n+1} D_{n+2} ... D_{2n}
+        D_{n-1} D_n     D_{n+1} ... D_{2n-1}
+        ...
+        D_1     D_2     D_3     ... D_n
+    """
+    data_idx = np.arange(data.size//2)[::-1, np.newaxis] + np.arange(data.size//2 + 1)
+    return data[data_idx]
+
+def char_poly_toeplitz(matrix: DataArray, symbol: sympy.Symbol) -> sympy.Expr:
+    """Characteristic polynomial generator using Toeplitz matrix approach"""
+    # The matrix must be non-square where columns are one more than the rows: {n-1} by {n}
+    assert matrix.shape[-1]-1 == matrix.shape[-2], f'Unsupported matrix shape {matrix.shape}'
+    while True:
+        # Create n matrices of shape {n-1} by {n-1}, by removing one column at a time
+        degree = matrix.shape[-1]
+        matrix_set = np.fromiter((sympy.Matrix(np.delete(matrix, i, axis=-1))
+                                 for i in range(degree)), dtype=sympy.Matrix)
+        # The determinants of these matrices are the coefficients of characteristic polynomial
+        det_arr = np.vectorize(sympy.det, otypes=[sympy.Expr])(matrix_set)
+        if det_arr.any():
+            # Construct the polynomial, `-symbol` is to accommodate swap parity
+            return (det_arr * (-symbol) ** np.arange(det_arr.shape[-1])).sum(-1)
+        # All minor determinants are zero - redundant data
+        # Cut first row and last matrix column, i.e. last two data values
+        matrix = matrix[..., 1:, :-1]
+
 def interpolate_toeplitz(data: DataArray, *, simplify: bool=False) -> sympy.Expr:
     """Generate exponential polynomial to interpolate given data
 
     This uses minor determinants of Toeplitz matrix
     """
-    print(f'TODO: Replace this with actual implementation', file=sys.stderr)
-    return sympy.S.Zero
+    if data.size % 2:
+        print('Input data must be of even size, last element is ignored', file=sys.stderr)
+    matrix = get_toeplitz_matrix(data)
+    print(f'  Toeplitz matrix:\n{matrix}')
+    symbol = sympy.abc.x
+    char_poly = char_poly_toeplitz(matrix, symbol)
+    print(f'  Characteristic polynomial: {char_poly}')
+    roots = sympy.roots(char_poly, symbol)
+    bases = np.fromiter(roots.keys(), dtype=object)
+    repeats = np.fromiter(roots.values(), dtype=int)
+    print(f'  Exponent bases: {bases}, multiplicity {repeats}')
+    coefs, powers = solve_coefficients(data, bases, repeats)
+    print(f'  Polynomial coefficients: {coefs}')
+    exp_poly = build_exp_poly(coefs, powers, bases, repeats)
+    return sympy.simplify(exp_poly) if simplify else exp_poly
 
+#
+# Main function
+#
 def main(argv):
     """Standalone execution"""
     data = sympy.sympify(argv)
     data = np.squeeze(np.asarray(data))
     print(f'Input data: {data}')
-    exp_poly = interpolate_number_wall(data)
+    #exp_poly = interpolate_number_wall(data)
+    exp_poly = interpolate_toeplitz(data)
     print(f'  Decomposed function: {sympy.latex(exp_poly)}')
     print(f'    Simplified: {sympy.latex(sympy.simplify(exp_poly))}')
     reval = sympy.lambdify(sympy.abc.x, exp_poly, 'numpy')(np.arange(data.size + 3))
