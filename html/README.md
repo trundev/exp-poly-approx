@@ -15,3 +15,7 @@ Examples running in GitHub pages
 - Interpolation using determinant of [Toeplitz matrix](https://en.wikipedia.org/wiki/Toeplitz_matrix) approach:
 
   [toeplitz-matrix-interpolation.html](toeplitz-matrix-interpolation.html)
+
+- Interpolation from given exponent bases (isolated second step of interpolation process)
+
+  [fixed-expoent-interpolation.html](fixed-expoent-interpolation.html)
