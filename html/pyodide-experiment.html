@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pyodide experiment</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js"></script>
+    <script src="tools.js"></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+
+  <body>
+    <h1>Experiment to install module using micropip</h1>
+    <script type="text/javascript">
+      async function main() {
+        // Load Pyodide and all common Python code
+        let pyodide = await load_python("py-box");
+        pyodide.runPython(`
+                import os
+                print('os.getcwd():', os.getcwd())
+                print('os.listdir():', os.listdir())
+                print("os.listdir('/'):", os.listdir('/'))
+            `);
+
+        // Download a package from GitHub
+        // (can not use "../archive/refs/heads/github.io.zip", as we are in "trundev.github.io" domain)
+        const response = await fetch(
+          "https://github.com/trundev/exp-poly-approx/archive/refs/heads/github.io.zip",
+          {
+            mode: "no-cors",
+          }
+        );
+        const pythonCode = await response.text();
+        // Copy it in the [Emscripten File System](https://emscripten.org/)
+        pyodide.FS.writeFile("/my_module.zip", await response.text());
+        pyodide.runPython(
+          "import os; print('After download:', os.listdir('/'))"
+        );
+
+        // Install it using micropip
+        let micropip = await pyodide.loadPackage("micropip");
+        await pyodide.runPythonAsync(`
+                import micropip
+                await micropip.install('emfs://my_module.zip')
+                print(micropip.__version__)
+            `);
+      }
+      main();
+    </script>
+    <div>
+      <div>
+        <h3>Here comes the python output</h3>
+        <pre id="py-box"><i>Initializing python...</i></pre>
+      </div>
+    </div>
+  </body>
+</html>
